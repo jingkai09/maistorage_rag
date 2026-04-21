@@ -7,7 +7,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # --- 1. CONFIGURATION ---
 # Use your brand-new, private API Key from the new Google Project
-API_KEY = "AIzaSyCw03Z4s1dDneyjldMIbE-ndm9O70CQIsM" 
+API_KEY = "AIzaSyBcBI7veswOethiPYw1pLPzBLkcw6WFrFQ" 
 os.environ["GOOGLE_API_KEY"] = API_KEY
 
 st.set_page_config(page_title="MaiStorage Agentic RAG", layout="wide")
