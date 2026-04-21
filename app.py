@@ -5,124 +5,143 @@ from langchain_community.vectorstores import Chroma
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-# Setup environment & credentials
-# Note: Using st.secrets is safer for production, but hardcoded for this demo
-KEY = "AIzaSyBcyIXuLWtSGhQnOwBphzUEa8GzGMtM1F8" 
-os.environ["GOOGLE_API_KEY"] = KEY
+# --- 1. CONFIGURATION ---
+# Use your brand-new, private API Key from the new Google Project
+API_KEY = "AIzaSyBcyIXuLWtSGhQnOwBphzUEa8GzGMtM1F8" 
+os.environ["GOOGLE_API_KEY"] = API_KEY
 
-st.set_page_config(page_title="MaiStorage RAG Engine", layout="wide")
+st.set_page_config(page_title="MaiStorage Agentic RAG", layout="wide")
 
-# Internal AI Models
-engine = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
-vector_tool = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+# Initialize Gemini 2.5 Flash & stable Embedding model
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=API_KEY, temperature=0.1)
+embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001", google_api_key=API_KEY)
 
-# Track conversation and file status
-if "messages" not in st.session_state:
-    st.session_state.messages = [] 
-if "docs_loaded" not in st.session_state:
+# --- 2. SESSION STATE ---
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = [] 
+if "uploaded_files" not in st.session_state:
     st.session_state.uploaded_files = [] 
 
-# Sidebar Management
+# --- 3. SIDEBAR: DYNAMIC INGESTION ---
 with st.sidebar:
-    st.title("Admin Panel")
-    st.subheader("Upload Knowledge")
-    pdf_input = st.file_uploader("Drop Phison PDFs here", type="pdf")
+    st.header("📂 Knowledge Management")
+    st.write("Upload technical PDFs to build the Agent's knowledge base.")
+    uploaded_file = st.file_uploader("Upload Phison/MaiStorage PDF", type="pdf")
     
-    if pdf_input:
-        if pdf_input.name not in st.session_state.uploaded_files:
-            with st.status(f"Processing {pdf_input.name}...") as status:
-                # Local handling
-                path = f"local_{pdf_input.name}"
-                with open(path, "wb") as f:
-                    f.write(pdf_input.getbuffer())
+    if uploaded_file:
+        # Check if this file has already been indexed to avoid redundant API calls
+        if uploaded_file.name not in st.session_state.uploaded_files:
+            with st.spinner(f"Agent is indexing {uploaded_file.name}..."):
+                # Save temp file locally for the loader
+                temp_path = f"temp_{uploaded_file.name}"
+                with open(temp_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
                 
-                # Custom Chunking Logic
-                raw_data = PyPDFLoader(path).load()
-                splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=100)
-                chunks = splitter.split_documents(raw_data)
+                loader = PyPDFLoader(temp_path)
+                data = loader.load()
                 
-                # Build/Update local vector store
-                if "vector_db" not in st.session_state:
-                    st.session_state.vector_db = Chroma.from_documents(
+                # Recursive splitting preserves technical context better than standard splitting
+                text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=150)
+                chunks = text_splitter.split_documents(data)
+                
+                # Append documents to the existing Chroma collection
+                if "db" not in st.session_state:
+                    st.session_state.db = Chroma.from_documents(
                         documents=chunks, 
-                        embedding=vector_tool
+                        embedding=embeddings, 
+                        collection_name="demo_collection"
                     )
                 else:
-                    st.session_state.vector_db.add_documents(chunks)
+                    st.session_state.db.add_documents(chunks)
                 
-                st.session_state.uploaded_files.append(pdf_input.name)
-                status.update(label="Index Updated!", state="complete")
+                st.session_state.uploaded_files.append(uploaded_file.name)
+                st.success(f"✅ Added {uploaded_file.name}")
     
+    # List active knowledge sources
     if st.session_state.uploaded_files:
-        st.info(f"Connected to: {', '.join(st.session_state.uploaded_files)}")
+        st.write("**Active Sources:**")
+        for f_name in st.session_state.uploaded_files:
+            st.caption(f"• {f_name}")
 
-    if st.sidebar.button("Clear App Data"):
-        st.session_state.messages = []
+    if st.button("🗑️ Reset Agent Memory"):
+        st.session_state.chat_history = []
         st.session_state.uploaded_files = []
-        if "vector_db" in st.session_state:
-            del st.session_state.vector_db
+        if "db" in st.session_state:
+            del st.session_state.db
         st.rerun()
 
-# Main Chat Interface
-st.title("🤖 Technical Support Agent")
-st.markdown("---")
+# --- 4. CHAT UI ---
+st.title("🤖 MaiStorage Technical Agent")
+st.caption("Agentic RAG with Multi-turn Memory and Cross-Document Retrieval")
 
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.write(msg["content"])
-        if "refs" in msg:
-            with st.expander("Show Evidence"):
-                st.caption(msg["refs"])
+# Display conversation history
+for message in st.session_state.chat_history:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+        if "references" in message:
+            with st.expander("📚 View Evidence"):
+                st.markdown(message["references"])
 
-# Query Handling
-user_input = st.chat_input("Ask about model specs, hardware, or errors...")
+# --- 5. AGENTIC LOGIC ---
+query = st.chat_input("Ask a technical question...")
 
-if user_input:
-    st.session_state.messages.append({"role": "user", "content": user_input})
+if query:
+    st.session_state.chat_history.append({"role": "user", "content": query})
     with st.chat_message("user"):
-        st.write(user_input)
+        st.markdown(query)
     
-    if "vector_db" not in st.session_state:
-        st.error("Knowledge base is empty. Please upload a PDF to start.")
+    if "db" not in st.session_state:
+        st.warning("Please upload a technical document in the sidebar to begin.")
     else:
         with st.chat_message("assistant"):
-            with st.spinner("Analyzing documentation..."):
-                # Search across all uploaded files
-                results = st.session_state.vector_db.similarity_search(user_input, k=4)
+            with st.status("Thinking (Retrieve -> Rerank -> Synthesize)..."):
+                # Retrieval: Fetch the top 4 most relevant chunks
+                docs = st.session_state.db.similarity_search(query, k=4)
                 
-                # Format references cleanly
-                evidence_list = []
-                for r in results:
-                    file_src = os.path.basename(r.metadata.get("source", "Doc"))
-                    page_num = r.metadata.get("page", 0) + 1
-                    snippet = r.page_content[:200].replace("\n", " ")
-                    evidence_list.append(f"**{file_src} (p.{page_num})**: ...{snippet}...")
+                # Group references by filename and page
+                sources_found = {}
+                for doc in docs:
+                    filename = os.path.basename(doc.metadata.get("source", "Unknown"))
+                    page = doc.metadata.get("page", 0) + 1
+                    key = f"{filename} (Page {page})"
+                    if key not in sources_found:
+                        sources_found[key] = []
+                    sources_found[key].append(doc.page_content[:250].replace("\n", " "))
 
-                citation_text = "\n\n".join(evidence_list)
+                # Construct citation string for the expander
+                ref_string = ""
+                for source, snippets in sources_found.items():
+                    ref_string += f"**{source}**\n"
+                    for s in snippets:
+                        ref_string += f"> ...{s}...\n\n"
                 
-                # Building the prompt contextually
-                context_block = "\n\n".join([f"[{d.metadata.get('source')} Page {d.metadata.get('page')+1}] {d.page_content}" for d in results])
-                chat_mem = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[-4:]])
+                # Prepare context and memory for the LLM
+                context = "\n\n".join([f"[Source: {d.metadata.get('source')} Page {d.metadata.get('page')+1}] {d.page_content}" for d in docs])
+                history_str = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.chat_history[-5:-1]])
                 
-                prompt_template = f"""You are a specialized engineer for MaiStorage. 
-                Use the following context to answer precisely. If the data isn't there, say you don't know.
+                prompt = f"""You are a technical assistant for MaiStorage. 
+                Answer the question based ONLY on the provided CONTEXT. 
+                Use the CHAT HISTORY to understand follow-up questions.
                 
-                PREVIOUS CHAT:
-                {chat_mem}
+                CHAT HISTORY:
+                {history_str}
                 
-                TECHNICAL CONTEXT:
-                {context_block}
+                CONTEXT:
+                {context}
                 
-                USER QUESTION: {user_input}"""
+                QUESTION: {query}"""
                 
-                bot_reply = engine.invoke(prompt_template).content
+                response = llm.invoke(prompt)
+                answer = response.content
 
-            st.write(bot_reply)
-            with st.expander("Show Evidence"):
-                st.caption(citation_text)
+            # Display final answer with hidden references
+            st.markdown(answer)
+            with st.expander("📚 View Evidence"):
+                st.markdown(ref_string)
             
-            st.session_state.messages.append({
+            # Save assistant response and references to history
+            st.session_state.chat_history.append({
                 "role": "assistant", 
-                "content": bot_reply, 
-                "refs": citation_text
+                "content": answer, 
+                "references": ref_string
             })
