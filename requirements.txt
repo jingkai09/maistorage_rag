@@ -4,3 +4,4 @@ langchain-community
 pypdf
 chromadb
 langchain-text-splitters
+protobuf==3.20.3
