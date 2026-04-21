@@ -1,0 +1,11 @@
+# Local Vector Database
+chroma_db/
+
+# Temporary Files
+temp_*.pdf
+__pycache__/
+
+# Local Environment (if you use one)
+.env
+venv/
+.DS_Store
